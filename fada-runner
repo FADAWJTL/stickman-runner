@@ -1,0 +1,7 @@
+cd /path/to/stickman-runner
+git init
+git add .
+git commit -m "Initial Phaser game"
+git branch -M main
+git remote add origin https://github.com/<your-username>/stickman-runner.git
+git push -u origin main
