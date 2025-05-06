@@ -1,0 +1,181 @@
+<!-- Save this entire document as `index.html` in your `stickman-runner/` project folder -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stick Man Runner - Phaser 3</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+</head>
+<body>
+<script>
+// Wrap all game code in an IIFE to avoid duplicate global declarations
+(function() {
+  class Obstacle {
+    constructor(scene) {
+      this.scene = scene;
+      this.reset();
+    }
+    reset() {
+      this.startZ = Phaser.Math.Between(2000, 5000);
+      this.z = this.startZ;
+      this.targetX = Phaser.Math.FloatBetween(
+        -this.scene.game.config.width / 2,
+        this.scene.game.config.width / 2
+      );
+      this.x = 0;
+    }
+    update(speed) {
+      this.z -= speed;
+      const frac = 1 - this.z / this.startZ;
+      this.x = this.targetX * frac;
+      if (this.z <= 50) {
+        this.reset();
+        return true;
+      }
+      return false;
+    }
+    draw(graphics) {
+      const F = this.scene.F;
+      const { vpX, vpY } = this.scene;
+      const scale = F / this.z;
+      const sx = vpX + this.x * scale;
+      const sy = vpY + F * scale;
+      const size = Math.max(1, scale * 20);
+      graphics.fillStyle(0xc80000);
+      graphics.fillRect(sx - size / 2, sy - size / 2, size, size);
+      return new Phaser.Geom.Rectangle(
+        sx - size / 2,
+        sy - size / 2,
+        size,
+        size
+      );
+    }
+  }
+
+  class MainScene extends Phaser.Scene {
+    constructor() {
+      super({ key: 'MainScene' });
+    }
+    preload() {
+      this.load.image('stickman', 'images/stickman.png');
+    }
+    create() {
+      const { width: W, height: H } = this.game.config;
+      this.vpX = W / 2;
+      this.vpY = H / 2;
+      this.F = 250;
+      this.baseY = this.vpY + (H - this.vpY) * (2 / 3);
+
+      this.player = this.add.sprite(this.vpX, this.baseY, 'stickman');
+      this.player.setOrigin(0.5, 0.5);
+
+      this.moveSpeed = 5;
+      this.gravity = 1;
+      this.jumpSpeed = -20;
+      this.velocityY = 0;
+      this.grounded = true;
+      this.dodges = 0;
+
+      this.obstacles = Array.from({ length: 8 }, () => new Obstacle(this));
+      this.speed = 10;
+      this.gameOver = false;
+
+      this.dodgeText = this.add.text(10, 10, 'Dodge: 0', { font: '20px Arial', fill: '#fff' });
+      this.gameOverText = this.add.text(W / 2, H / 2, '', { font: '48px Arial', fill: '#fff' }).setOrigin(0.5);
+      this.restartText = this.add.text(W / 2, H / 2 + 60, '', { font: '24px Arial', fill: '#fff' }).setOrigin(0.5);
+
+      this.cursors = this.input.keyboard.createCursorKeys();
+    }
+    update() {
+      const { width: W, height: H } = this.game.config;
+      const graphics = this.add.graphics();
+
+      // draw background
+      graphics.clear();
+      graphics.fillStyle(0x87ceeb);
+      graphics.fillRect(0, 0, W, H);
+
+      // draw ground grid
+      graphics.lineStyle(1, 0x505050, 1);
+      for (let i = 1; i < 40; i++) {
+        const z = i * 8;
+        const scale = this.F / z;
+        const lx = this.vpX - (W / 2) * scale;
+        const ly = this.vpY + this.F * scale;
+        const rx = this.vpX + (W / 2) * scale;
+        const ry = ly;
+        graphics.beginPath();
+        graphics.moveTo(lx, ly);
+        graphics.lineTo(rx, ry);
+        graphics.moveTo(lx, ly);
+        graphics.lineTo(this.vpX, this.vpY);
+        graphics.moveTo(rx, ry);
+        graphics.lineTo(this.vpX, this.vpY);
+        graphics.strokePath();
+      }
+
+      if (this.gameOver) return;
+
+      // movement input
+      if (this.cursors.left.isDown) {
+        this.player.x -= this.moveSpeed;
+        this.player.setFlipX(true);
+      } else if (this.cursors.right.isDown) {
+        this.player.x += this.moveSpeed;
+        this.player.setFlipX(false);
+      }
+
+      // jump logic
+      if (Phaser.Input.Keyboard.JustDown(this.cursors.space) && this.grounded) {
+        this.velocityY = this.jumpSpeed;
+        this.grounded = false;
+      }
+      if (!this.grounded) {
+        this.velocityY += this.gravity;
+        this.player.y += this.velocityY;
+        if (this.player.y >= this.baseY) {
+          this.player.y = this.baseY;
+          this.velocityY = 0;
+          this.grounded = true;
+        }
+      }
+
+      // clamp within corridor
+      const tLine = (this.baseY - this.vpY) / (H - this.vpY);
+      const leftLimit = this.vpX * (1 - tLine);
+      const rightLimit = this.vpX + (W - this.vpX) * tLine;
+      this.player.x = Phaser.Math.Clamp(this.player.x, leftLimit, rightLimit);
+
+      // update obstacles
+      this.obstacles.forEach(obs => {
+        if (obs.update(this.speed)) {
+          this.dodges++;
+          this.dodgeText.setText('Dodge: ' + this.dodges);
+        }
+        const rect = obs.draw(graphics);
+        if (Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), rect)) {
+          this.gameOver = true;
+          this.gameOverText.setText('Game Over');
+          this.restartText.setText('Press SPACE to restart');
+        }
+      });
+
+      // restart on space after game over
+      if (this.gameOver && Phaser.Input.Keyboard.JustDown(this.cursors.space)) {
+        this.scene.restart();
+      }
+    }
+  }
+
+  const config = {
+    type: Phaser.AUTO,
+    width: 900,
+    height: 600,
+    scene: MainScene
+  };
+  new Phaser.Game(config);
+})();
+</script>
+</body>
+</html>
